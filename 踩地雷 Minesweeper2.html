@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>踩地雷 Minesweeper</title>
+  <style>
+    #game-board {
+      display: grid;
+      grid-gap: 2px;
+      margin: 20px auto;
+      width: fit-content;
+    }
+    .cell {
+      width: 30px;
+      height: 30px;
+      background-color: #ccc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .cell.revealed {
+      background-color: #eee;
+      cursor: default;
+    }
+    .cell.mine {
+      background-color: red;
+    }
+    .cell.flagged {
+      background-color: yellow;
+    }
+    button, select {
+      display: block;
+      margin: 10px auto;
+      padding: 5px 10px;
+    }
+    #timer {
+      text-align: center;
+      font-size: 18px;
+      margin: 10px;
+    }
+    #mine-counter {
+      text-align: left;
+      font-size: 18px;
+      margin: 10px;
+    }
+    #mode-button {
+      margin: 10px;
+    }
+    .number-1 { color: blue; }
+    .number-2 { color: green; }
+    .number-3 { color: red; }
+    .number-4 { color: purple; }
+    .number-5 { color: orange; }
+    .number-6 { color: darkgoldenrod; }
+    .number-7 { color: mediumvioletred; }
+    .number-8 { color: brown; }
+    #statistics {
+      text-align: center;
+      margin: 20px;
+    }
+  </style>
+</head>
+<body>
+  <h1>踩地雷 Minesweeper</h1>
+  <div id="controls">
+    <select id="difficulty-select">
+      <option value="easy">初級 (9x9, 10 地雷)</option>
+      <option value="medium" selected>中級 (16x16, 40 地雷)</option>
+      <option value="hard">高級 (24x24, 99 地雷)</option>
+    </select>
+    <button id="mode-button">Mine Mode</button>
+    <button id="how-to-play-button">How to Play</button>
+  </div>
+  <div id="mine-counter">Mine remaining: 40</div>
+  <div id="timer">時間: 0 秒</div>
+  <div id="game-board"></div>
+  <button id="reset-button">重新開始</button>
+  <div id="statistics"></div>
+  <script>
+    let board = [];
+    let gameOver = false;
+    let gameStarted = false;
+    let boardSize = 16;
+    let mineCount = 40;
+    let timerInterval = null;
+    let secondsElapsed = 0;
+    let currentMode = 'mine';
+    let flagsPlaced = 0;
+    
+    const gameBoard = document.getElementById('game-board');
+    const resetButton = document.getElementById('reset-button');
+    const difficultySelect = document.getElementById('difficulty-select');
+    const timerDisplay = document.getElementById('timer');
+    const modeButton = document.getElementById('mode-button');
+    const howToPlayButton = document.getElementById('how-to-play-button');
+
+    function setGameSettings() {
+      const difficulty = difficultySelect.value;
+      if (difficulty === 'easy') {
+        boardSize = 9;
+        mineCount = 10;
+      } else if (difficulty === 'medium') {
+        boardSize = 16;
+        mineCount = 40;
+      } else if (difficulty === 'hard') {
+        boardSize = 24;
+        mineCount = 99;
+      }
+    }
+
+    function initializeBoard() {
+      clearTimeout(timerInterval);
+      secondsElapsed = 0;
+      timerDisplay.textContent = '時間: 0 秒';
+      gameStarted = false;
+      gameOver = false;
+      currentMode = 'mine';
+      flagsPlaced = 0;
+      updateMineCounter();
+      setGameSettings();
+      board = [];
+      gameBoard.innerHTML = '';
+      gameBoard.style.gridTemplateColumns = 'repeat(' + boardSize + ', 30px)';
+      
+      for (let i = 0; i < boardSize; i++) {
+        board[i] = [];
+        for (let j = 0; j < boardSize; j++) {
+          const cell = document.createElement('div');
+          cell.classList.add('cell');
+          cell.dataset.row = i;
+          cell.dataset.col = j;
+          cell.addEventListener('click', handleCellClick);
+          gameBoard.appendChild(cell);
+          board[i][j] = {
+            element: cell,
+            mine: false,
+            revealed: false,
+            flagged: false,
+            adjacentMines: 0
+          };
+        }
+      }
+      placeMines();
+      calculateAdjacentMines();
+      modeButton.textContent = 'Mine Mode';
+      
+      // 顯示統計數據
+      const difficulty = difficultySelect.value;
+      const bestTime = localStorage.getItem(difficulty + 'BestTime');
+      const times = JSON.parse(localStorage.getItem(difficulty + 'Times')) || [];
+      const averageTime = times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : null;
+      displayStatistics(difficulty, bestTime, averageTime);
+    }
+
+    function placeMines() {
+      let minesPlaced = 0;
+      while (minesPlaced < mineCount) {
+        const row = Math.floor(Math.random() * boardSize);
+        const col = Math.floor(Math.random() * boardSize);
+        if (!board[row][col].mine) {
+          board[row][col].mine = true;
+          minesPlaced++;
+        }
+      }
+    }
+
+    function calculateAdjacentMines() {
+      for (let i = 0; i < boardSize; i++) {
+        for (let j = 0; j < boardSize; j++) {
+          if (board[i][j].mine) continue;
+          let count = 0;
+          for (let di = -1; di <= 1; di++) {
+            for (let dj = -1; dj <= 1; dj++) {
+              const ni = i + di;
+              const nj = j + dj;
+              if (ni >= 0 && ni < boardSize && nj >= 0 && nj < boardSize && board[ni][nj].mine) {
+                count++;
+              }
+            }
+          }
+          board[i][j].adjacentMines = count;
+        }
+      }
+    }
+
+    function startTimer() {
+      timerInterval = setTimeout(function tick() {
+        secondsElapsed++;
+        timerDisplay.textContent = '時間: ' + secondsElapsed + ' 秒';
+        timerInterval = setTimeout(tick, 1000);
+      }, 1000);
+    }
+
+    function handleCellClick(event) {
+      if (gameOver) return;
+      const row = parseInt(event.target.dataset.row);
+      const col = parseInt(event.target.dataset.col);
+      const cell = board[row][col];
+      
+      if (!gameStarted) {
+        gameStarted = true;
+        startTimer();
+      }
+      
+      if (currentMode === 'mine') {
+        if (cell.flagged) return;
+        if (cell.mine) {
+          cell.element.classList.add('revealed');
+          cell.element.textContent = '💣';
+          revealAllMines();
+          gameOver = true;
+          clearTimeout(timerInterval);
+          alert('遊戲結束！你踩到地雷了。');
+        } else {
+          revealCell(row, col);
+          checkWin();
+        }
+      } else if (currentMode === 'flag') {
+        if (cell.revealed) return;
+        if (cell.flagged) {
+          cell.flagged = false;
+          cell.element.textContent = '';
+          cell.element.classList.remove('flagged');
+          flagsPlaced--;
+        } else {
+          cell.flagged = true;
+          cell.element.textContent = '🚩';
+          cell.element.classList.add('flagged');
+          flagsPlaced++;
+        }
+        updateMineCounter();
+      }
+    }
+
+    function revealCell(row, col) {
+      const cell = board[row][col];
+      if (cell.revealed || cell.flagged) return;
+      cell.revealed = true;
+      cell.element.classList.add('revealed');
+      if (cell.adjacentMines > 0) {
+        cell.element.textContent = cell.adjacentMines;
+        cell.element.classList.add('number-' + cell.adjacentMines);
+      } else {
+        for (let di = -1; di <= 1; di++) {
+          for (let dj = -1; dj <= 1; dj++) {
+            const ni = row + di;
+            const nj = col + dj;
+            if (ni >= 0 && ni < boardSize && nj >= 0 && nj < boardSize) {
+              revealCell(ni, nj);
+            }
+          }
+        }
+      }
+    }
+
+    function revealAllMines() {
+      for (let i = 0; i < boardSize; i++) {
+        for (let j = 0; j < boardSize; j++) {
+          if (board[i][j].mine) {
+            board[i][j].element.classList.add('mine');
+            board[i][j].element.textContent = '💣';
+          }
+        }
+      }
+    }
+
+    function updateMineCounter() {
+      const mineCounter = document.getElementById('mine-counter');
+      mineCounter.textContent = 'Mine remaining: ' + (mineCount - flagsPlaced);
+    }
+
+    function toggleMode() {
+      if (currentMode === 'mine') {
+        currentMode = 'flag';
+        modeButton.textContent = 'Flag Mode';
+      } else {
+        currentMode = 'mine';
+        modeButton.textContent = 'Mine Mode';
+      }
+    }
+
+    function checkWin() {
+      let revealedCount = 0;
+      for (let i = 0; i < boardSize; i++) {
+        for (let j = 0; j < boardSize; j++) {
+          if (board[i][j].revealed) {
+            revealedCount++;
+          }
+        }
+      }
+      if (revealedCount === boardSize * boardSize - mineCount) {
+        gameOver = true;
+        clearTimeout(timerInterval);
+        alert('恭喜！你贏了！');
+        updateStatistics();
+      }
+    }
+
+    function updateStatistics() {
+      const difficulty = difficultySelect.value;
+      const time = secondsElapsed;
+      
+      let bestTime = localStorage.getItem(difficulty + 'BestTime');
+      let times = JSON.parse(localStorage.getItem(difficulty + 'Times')) || [];
+      
+      if (!bestTime || time < bestTime) {
+        bestTime = time;
+        localStorage.setItem(difficulty + 'BestTime', bestTime);
+      }
+      
+      times.push(time);
+      localStorage.setItem(difficulty + 'Times', JSON.stringify(times));
+      
+      const averageTime = times.reduce((a, b) => a + b, 0) / times.length;
+      
+      displayStatistics(difficulty, bestTime, averageTime);
+    }
+
+    function displayStatistics(difficulty, bestTime, averageTime) {
+      const statsDiv = document.getElementById('statistics');
+      statsDiv.innerHTML = `
+        <h2>統計數據 - ${difficulty}</h2>
+        <p>最佳完成時間: ${bestTime ? bestTime + ' 秒' : '尚無記錄'}</p>
+        <p>平均完成時間: ${averageTime ? averageTime.toFixed(2) + ' 秒' : '尚無記錄'}</p>
+      `;
+    }
+
+    function showHowToPlay() {
+      alert(
+        '歡迎來到踩地雷 Minesweeper！\n\n' +
+        '遊戲目標：\n' +
+        '揭示所有非地雷格子，避免踩到地雷。\n\n' +
+        '操作說明：\n' +
+        '- 點擊「Mine Mode」按鈕切換到揭示模式，點擊格子以揭示其內容。\n' +
+        '- 點擊「Flag Mode」按鈕切換到標記模式，點擊格子以標記或取消標記旗子。\n' +
+        '- 地雷計數器顯示剩餘的地雷數量（總地雷數 - 已標記的旗子數）。\n' +
+        '- 計時器記錄遊戲時間。\n\n' +
+        '勝利條件：\n' +
+        '揭示所有非地雷格子即可獲勝。\n\n' +
+        '失敗條件：\n' +
+        '揭示到地雷格子，遊戲結束。'
+      );
+    }
+
+    resetButton.addEventListener('click', initializeBoard);
+    difficultySelect.addEventListener('change', function() {
+      initializeBoard();
+      const difficulty = difficultySelect.value;
+      const bestTime = localStorage.getItem(difficulty + 'BestTime');
+      const times = JSON.parse(localStorage.getItem(difficulty + 'Times')) || [];
+      const averageTime = times.length > 0 ? times.reduce((a, b) => a + b, 0) / times.length : null;
+      displayStatistics(difficulty, bestTime, averageTime);
+    });
+    modeButton.addEventListener('click', toggleMode);
+    howToPlayButton.addEventListener('click', showHowToPlay);
+
+    initializeBoard();
+  </script>
+</body>
+</html>
